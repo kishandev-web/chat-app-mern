@@ -18,7 +18,7 @@ export const validator =
     } catch (err: any) {
       res.status(400).json({
         success: false,
-        message: err.errors[0],
+        message: err.errors?.[0] ?? err.message ?? "Validation failed",
       });
     }
   };

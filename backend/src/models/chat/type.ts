@@ -1,6 +1,6 @@
 import { Document, Types } from "mongoose";
 export interface IChat extends Document {
-  participants: Types.ObjectId;
+  participants: Types.ObjectId[];  // Array of user IDs in this chat
   isGroup: boolean;
   groupName: String;
   groupAvatar: String;

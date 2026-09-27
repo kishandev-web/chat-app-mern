@@ -1,65 +1,33 @@
-import { Request, Response } from "express";
-import jwt from "jsonwebtoken";
+/**
+ * Environment Variable Validator
+ *
+ * Yahan saare required env variables validate hote hain.
+ * Agar koi variable missing hai toh startup pe hi error aayega —
+ * better than a cryptic runtime crash later.
+ */
 
-import User from "../models/user/schema";
-import admin from "../config/firebase";
+const REQUIRED_ENV_VARS = [
+  "MONGO_URI",
+  "JWT_SECRET",
+  "PORT",
+] as const;
 
-class AuthController {
-  static async verifyFirebaseToken(req: Request, res: Response) {
-    try {
-      const { token } = req.body;
+export const validateEnv = () => {
+  const missing: string[] = [];
 
-      if (!token) {
-        return res.status(400).json({
-          success: false,
-          message: "Token missing",
-        });
-      }
-
-      // verify firebase token
-      const decoded = await admin.auth().verifyIdToken(token);
-
-      const phone = decoded.phone_number;
-
-      // find user
-      let user = await User.findOne({
-        mobNo: phone,
-      });
-
-      // create user if not exists
-      if (!user) {
-        user = await User.create({
-          mobNo: phone,
-          name: "New User",
-        });
-      }
-
-      // create your own jwt
-      const accessToken = jwt.sign(
-        {
-          userId: user._id,
-        },
-        process.env.JWT_SECRET!,
-        {
-          expiresIn: "7d",
-        },
-      );
-
-      return res.status(200).json({
-        success: true,
-        message: "Login successful",
-        accessToken,
-        user,
-      });
-    } catch (error) {
-      console.log(error);
-
-      return res.status(500).json({
-        success: false,
-        message: "Authentication failed",
-      });
+  for (const key of REQUIRED_ENV_VARS) {
+    if (!process.env[key]) {
+      missing.push(key);
     }
   }
-}
 
-export default AuthController;
+  if (missing.length > 0) {
+    throw new Error(
+      `❌ Missing required environment variables: ${missing.join(", ")}\n` +
+        `Please check your .env file.`,
+    );
+  }
+
+  console.log("✅ Environment variables validated successfully");
+};
+

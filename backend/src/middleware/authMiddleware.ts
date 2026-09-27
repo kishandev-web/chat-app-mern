@@ -13,33 +13,31 @@ export const authMiddleware = async (req: any, res: any, next: any) => {
 
   try {
     const decoded: any = verifyToken(token);
-    const user = await User.findById(decoded.id).populate("role");
+    const user = await User.findById(decoded.id);
     if (!user) {
       return res.status(401).json({ message: "User not found" });
     }
     req.user = user;
     next();
-  } catch (error) {
+  } catch (error: any) {
+    console.error("[authMiddleware] Token verification error:", error.message);
     res.status(401).json({ message: "Invalid token" });
   }
 };
 
 export const socketAuthMiddleware = (socket: any, next: any) => {
   try {
-    console.log("sdjisemdaednadj");
     const token = socket.handshake.auth.token || socket.handshake.headers.token;
-    console.log("token>>>>", token);
 
     if (!token) {
-      return next(new Error("Unauthorized"));
+      return next(new Error("Unauthorized: No token provided"));
     }
 
     const decoded = verifyToken(token);
-
     socket.user = decoded;
-
     next();
+
   } catch (error) {
-    next(new Error("Unauthorized"));
+    next(new Error("Unauthorized: Invalid token"));
   }
 };
