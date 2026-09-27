@@ -1,177 +1,296 @@
 import React, { useState } from "react";
+import { useForm } from "react-hook-form";
+import { useDispatch, useSelector } from "react-redux";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ArrowRight, MessageCircle } from "lucide-react";
+import { ArrowRight, MessageCircle, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { sendOtp, verifyOtp } from "../services/authService";
+import { verifyFirebaseTokenThunk } from "../store/slices/authSlice";
 
-const LoginScreen = ({ onLogin }) => {
-  const [step, setStep] = useState(1);
-  const [phone, setPhone] = useState("");
-  const [otp, setOtp] = useState(["", "", "", "", "", ""]);
+const LoginScreen = ({ onLoginSuccess }) => {
+  const dispatch = useDispatch();
+  const { loading: authLoading, error: authError } = useSelector((state) => state.auth);
 
-  const handleOtpChange = (index, value) => {
-    if (value.length > 1) return;
-    const newOtp = [...otp];
-    newOtp[index] = value;
-    setOtp(newOtp);
+  const [step, setStep] = useState(1); // 1 = Phone, 2 = OTP
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [otpValues, setOtpValues] = useState(["", "", "", "", "", ""]);
+  const [localError, setLocalError] = useState("");
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
 
-    // Auto-focus next input
-    if (value && index < 5) {
-      document.getElementById(`otp-${index + 1}`).focus();
-    }
-  };
-  const handleSendOtp = async () => {
+  // Phone Form with React Hook Form
+  const {
+    register,
+    handleSubmit,
+    formState: { errors: phoneErrors },
+  } = useForm({
+    defaultValues: {
+      phone: "",
+    },
+  });
+
+  // Step 1: Send OTP via Firebase
+  const handlePhoneSubmit = async (data) => {
     try {
-      const cleanPhone = phone.trim();
-      if (!cleanPhone) {
-        alert("Phone number required");
-        return;
-      }
-      if (!/^\d+$/.test(cleanPhone)) {
-        alert("Only numbers allowed");
-        return;
-      }
-      if (cleanPhone.length !== 10) {
-        alert("Enter valid phone number");
-        return;
-      }
-      await sendOtp(`+91${phone}`);
+      setLocalError("");
+      setSendingOtp(true);
+      const cleanPhone = data.phone.trim();
+      setPhoneNumber(cleanPhone);
 
+      await sendOtp(`+91${cleanPhone}`);
+      setSendingOtp(false);
       setStep(2);
-      alert("OTP sent successfully");
-    } catch (error) {
-      console.log(error);
+    } catch (err) {
+      console.error("Firebase sendOtp error:", err);
+      setSendingOtp(false);
+      setLocalError(err.message || "Failed to send OTP. Please try again.");
     }
   };
 
-  const handleVerifyOtp = async () => {
-    const code = otp.join("");
+  // Handle individual OTP input digits
+  const handleOtpChange = (index, value) => {
+    const val = value.replace(/\D/g, "");
+    if (val.length > 1) return;
 
-    const firebaseToken = await verifyOtp(code);
+    const newOtp = [...otpValues];
+    newOtp[index] = val;
+    setOtpValues(newOtp);
 
-    console.log(firebaseToken);
-
-    onLogin();
+    // Auto focus next box
+    if (val && index < 5) {
+      const nextInput = document.getElementById(`otp-input-${index + 1}`);
+      if (nextInput) nextInput.focus();
+    }
   };
 
-  // const handleContinue = () => {
-  //   if (step === 1 && phone) {
-  //     setStep(2);
-  //   } else if (step === 2) {
-  //     onLogin();
-  //   }
-  // };
+  const handleOtpKeyDown = (index, e) => {
+    if (e.key === "Backspace" && !otpValues[index] && index > 0) {
+      const prevInput = document.getElementById(`otp-input-${index - 1}`);
+      if (prevInput) prevInput.focus();
+    }
+  };
+
+  // Step 2: Verify Firebase OTP and Exchange for Backend JWT
+  const handleVerifyOtp = async () => {
+    const code = otpValues.join("");
+    if (code.length !== 6) {
+      setLocalError("Please enter complete 6-digit OTP");
+      return;
+    }
+
+    try {
+      setLocalError("");
+      setVerifyingOtp(true);
+
+      // Verify OTP with Firebase
+      const firebaseToken = await verifyOtp(code);
+
+      // Exchange Firebase Token for Backend JWT
+      const resultAction = await dispatch(
+        verifyFirebaseTokenThunk(firebaseToken)
+      );
+
+      setVerifyingOtp(false);
+
+      if (verifyFirebaseTokenThunk.fulfilled.match(resultAction)) {
+        if (onLoginSuccess) {
+          onLoginSuccess(resultAction.payload.user);
+        }
+      } else {
+        setLocalError(resultAction.payload || "Backend verification failed");
+      }
+    } catch (err) {
+      console.error("OTP verification error:", err);
+      setVerifyingOtp(false);
+      setLocalError(err.message || "Invalid verification code");
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (!phoneNumber) return;
+    try {
+      setLocalError("");
+      setSendingOtp(true);
+      await sendOtp(`+91${phoneNumber}`);
+      setSendingOtp(false);
+      setOtpValues(["", "", "", "", "", ""]);
+      alert("New OTP sent successfully!");
+    } catch (err) {
+      setSendingOtp(false);
+      setLocalError(err.message || "Failed to resend OTP");
+    }
+  };
+
+  const displayError = localError || authError;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#f0f2f5] dark:bg-whatsapp-dark overflow-hidden">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#f0f2f5] dark:bg-[#0b141a] overflow-hidden">
       {/* Dynamic Background Elements */}
-      <div className="absolute top-0 left-0 w-full h-1/2 bg-whatsapp-green-dark/10 dark:bg-whatsapp-green-dark/5 z-0" />
+      <div className="absolute top-0 left-0 w-full h-1/2 bg-whatsapp-green/10 dark:bg-whatsapp-green/5 z-0" />
       <div className="absolute -top-24 -right-24 w-96 h-96 bg-whatsapp-green/20 rounded-full blur-3xl" />
-      <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-whatsapp-blue/10 rounded-full blur-3xl" />
+      <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-[#128c7e]/15 rounded-full blur-3xl" />
 
       <motion.div
         initial={{ y: 30, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ type: "spring", damping: 20, stiffness: 100 }}
-        className="w-full max-w-[420px] mx-6 glass dark:glass-dark rounded-[32px] p-10 z-10 shadow-2xl relative border border-white/40 dark:border-white/5"
+        className="w-full max-w-[440px] mx-6 bg-white/80 dark:bg-[#111b21]/80 backdrop-blur-xl rounded-[32px] p-8 md:p-10 z-10 shadow-2xl relative border border-white/60 dark:border-white/10"
       >
-        <div className="flex flex-col items-center mb-10">
+        {/* Top Logo */}
+        <div className="flex flex-col items-center mb-8">
           <motion.div
             whileHover={{ rotate: 10, scale: 1.1 }}
-            className="w-20 h-20 bg-whatsapp-green rounded-[24px] flex items-center justify-center shadow-xl shadow-whatsapp-green/40 mb-6"
+            className="w-20 h-20 bg-whatsapp-green rounded-[24px] flex items-center justify-center shadow-xl shadow-whatsapp-green/40 mb-5"
           >
             <MessageCircle size={44} color="white" fill="white" />
           </motion.div>
           <h1 className="text-3xl font-bold text-slate-800 dark:text-white tracking-tight">
             WhatsApp
           </h1>
-          <p className="text-gray-500 dark:text-gray-400 text-[15px] mt-2 font-medium text-center">
+          <p className="text-gray-500 dark:text-gray-400 text-[15px] mt-1.5 font-medium text-center">
             {step === 1
               ? "Verify your phone number"
-              : "Enter verification code"}
+              : `Enter code sent to +91 ${phoneNumber}`}
           </p>
         </div>
 
+        {/* Error Notification */}
+        {displayError && (
+          <div className="mb-6 p-3.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-xl flex items-center gap-2.5 text-red-600 dark:text-red-400 text-xs">
+            <AlertCircle size={16} className="shrink-0" />
+            <span>{displayError}</span>
+          </div>
+        )}
+
         <AnimatePresence mode="wait">
           {step === 1 ? (
-            <motion.div
+            /* ─── STEP 1: Phone Form (React Hook Form) ─── */
+            <motion.form
               key="step1"
               initial={{ x: -20, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 20, opacity: 0 }}
-              className="space-y-8"
+              onSubmit={handleSubmit(handlePhoneSubmit)}
+              className="space-y-6"
             >
-              <div className="space-y-5">
-                {/* <div className="flex items-center justify-between p-4 bg-gray-50/50 dark:bg-white/5 rounded-2xl border border-transparent focus-within:border-whatsapp-green transition-all cursor-pointer">
-                  <span className="text-[15px] dark:text-white font-semibold">
-                    United States
-                  </span>
-                  <ChevronDown size={20} className="text-gray-400" />
-                </div> */}
-                <div className="flex gap-4">
-                  <div className="w-24 p-4 bg-gray-50/50 dark:bg-white/5 rounded-2xl border border-transparent text-center font-bold text-slate-800 dark:text-white">
+              <div>
+                <div className="flex gap-3">
+                  <div className="w-20 py-3.5 bg-gray-50 dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 text-center font-bold text-slate-800 dark:text-white flex items-center justify-center text-sm">
                     +91
                   </div>
                   <input
                     type="tel"
-                    placeholder="Phone number"
+                    placeholder="10-digit mobile number"
                     autoFocus
                     maxLength={10}
-                    value={phone}
-                    // onChange={(e) => setPhone(e.target.value)}
-                    onChange={(e) =>
-                      setPhone(e.target.value.replace(/\D/g, ""))
-                    }
-                    className="flex-1 p-4 bg-gray-50/50 dark:bg-white/5 rounded-2xl border border-transparent outline-none text-[16px] dark:text-white font-medium focus:ring-2 ring-whatsapp-green/20 transition-all placeholder:text-gray-400"
+                    {...register("phone", {
+                      required: "Mobile number is required",
+                      pattern: {
+                        value: /^[6-9]\d{9}$/,
+                        message: "Enter a valid 10-digit Indian phone number",
+                      },
+                    })}
+                    className="flex-1 px-4 py-3.5 bg-gray-50 dark:bg-white/5 rounded-2xl border border-gray-200 dark:border-white/10 outline-none text-[15px] dark:text-white font-medium focus:border-whatsapp-green transition-all placeholder:text-gray-400"
                   />
-                  <div id="recaptcha-container"></div>
                 </div>
+                {phoneErrors.phone && (
+                  <p className="text-xs text-red-500 mt-2 font-medium">
+                    {phoneErrors.phone.message}
+                  </p>
+                )}
               </div>
+
+              {/* Recaptcha container required by Firebase */}
+              <div id="recaptcha-container"></div>
+
               <p className="text-[12px] text-gray-500/80 dark:text-gray-400 text-center leading-relaxed font-medium">
                 WhatsApp will send an SMS message to verify your phone number.
-                Carrier charges may apply.
+                Carrier rates may apply.
               </p>
-            </motion.div>
+
+              <button
+                type="submit"
+                disabled={sendingOtp}
+                className="w-full bg-whatsapp-green hover:bg-[#20bd5a] text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-whatsapp-green/30 text-[15px] transition-all disabled:opacity-60 cursor-pointer"
+              >
+                {sendingOtp ? (
+                  <>
+                    <Loader2 size={20} className="animate-spin" />
+                    Sending OTP...
+                  </>
+                ) : (
+                  <>
+                    NEXT
+                    <ArrowRight size={20} strokeWidth={2.5} />
+                  </>
+                )}
+              </button>
+            </motion.form>
           ) : (
+            /* ─── STEP 2: OTP Verification ─── */
             <motion.div
               key="step2"
               initial={{ x: -20, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 20, opacity: 0 }}
-              className="space-y-8"
+              className="space-y-6"
             >
-              <div className="flex justify-between gap-3">
-                {otp.map((digit, i) => (
+              <div className="flex justify-between gap-2">
+                {otpValues.map((digit, i) => (
                   <input
                     key={i}
-                    id={`otp-${i}`}
+                    id={`otp-input-${i}`}
                     type="text"
                     inputMode="numeric"
                     maxLength={1}
                     value={digit}
                     autoFocus={i === 0}
                     onChange={(e) => handleOtpChange(i, e.target.value)}
-                    className="w-full h-16 bg-gray-50/80 dark:bg-white/5 rounded-2xl text-center text-2xl font-bold text-slate-800 dark:text-white border-2 border-transparent focus:border-whatsapp-green focus:bg-white dark:focus:bg-transparent outline-none transition-all shadow-sm"
+                    onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                    className="w-12 h-14 bg-gray-50 dark:bg-white/5 rounded-2xl text-center text-xl font-bold text-slate-800 dark:text-white border-2 border-transparent focus:border-whatsapp-green focus:bg-white dark:focus:bg-transparent outline-none transition-all shadow-sm"
                   />
                 ))}
               </div>
-              <div className="text-center">
-                <button className="text-[14px] text-whatsapp-green font-bold hover:underline transition-all underline-offset-4">
-                  Didn't receive code? Resend SMS
+
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="text-gray-500 hover:text-slate-800 dark:hover:text-white transition-colors"
+                >
+                  Change Number
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResendOtp}
+                  disabled={sendingOtp}
+                  className="text-whatsapp-green hover:underline flex items-center gap-1"
+                >
+                  <RefreshCw size={12} className={sendingOtp ? "animate-spin" : ""} />
+                  Resend SMS
                 </button>
               </div>
+
+              <button
+                type="button"
+                onClick={handleVerifyOtp}
+                disabled={verifyingOtp || authLoading}
+                className="w-full bg-whatsapp-green hover:bg-[#20bd5a] text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-whatsapp-green/30 text-[15px] transition-all disabled:opacity-60 cursor-pointer"
+              >
+                {verifyingOtp || authLoading ? (
+                  <>
+                    <Loader2 size={20} className="animate-spin" />
+                    Verifying...
+                  </>
+                ) : (
+                  <>
+                    VERIFY & ENTER
+                    <ArrowRight size={20} strokeWidth={2.5} />
+                  </>
+                )}
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
-
-        <motion.button
-          whileHover={{ scale: 1.02, backgroundColor: "#20bd5a" }}
-          whileTap={{ scale: 0.98 }}
-          onClick={step === 1 ? handleSendOtp : handleVerifyOtp}
-          className="w-full bg-whatsapp-green text-white font-bold py-4.5 rounded-2xl mt-10 flex items-center justify-center gap-3 shadow-xl shadow-whatsapp-green/30 text-[16px] transition-all"
-        >
-          {step === 1 ? "NEXT" : "VERIFY"}
-          <ArrowRight size={22} strokeWidth={2.5} />
-        </motion.button>
       </motion.div>
     </div>
   );
